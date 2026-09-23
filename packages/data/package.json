@@ -1,0 +1,6 @@
+{
+  "name": "@season/data", "version": "0.0.0", "private": true, "type": "module",
+  "exports": { ".": "./src/store.ts", "./seed": "./src/seed.ts", "./admin-client": "./src/admin-client.ts" },
+  "scripts": { "build": "tsc --noEmit", "typecheck": "tsc --noEmit" },
+  "dependencies": { "@season/types": "workspace:*", "@season/core": "workspace:*", "@supabase/supabase-js": "^2.49.4" }
+}

@@ -1,0 +1,10 @@
+{
+  "imports": {
+    "@season/types": "../../packages/types/src/index.ts",
+    "@season/core": "../../packages/core/src/index.ts",
+    "@season/data": "../../packages/data/src/store.ts",
+    "zod": "npm:zod@3.24.2",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.49.4",
+    "resend": "npm:resend@4.0.0"
+  }
+}

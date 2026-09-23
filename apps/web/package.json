@@ -1,0 +1,37 @@
+{
+  "name": "@season/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "@js-temporal/polyfill": "^0.5.1",
+    "@season/api-client": "workspace:*",
+    "@season/core": "workspace:*",
+    "@season/data": "workspace:*",
+    "@season/types": "workspace:*",
+    "@season/ui-tokens": "workspace:*",
+    "@supabase/ssr": "^0.6.1",
+    "@supabase/supabase-js": "^2.49.4",
+    "lucide-react": "^0.468.0",
+    "next": "16.3.5",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "resend": "^4.0.0",
+    "stripe": "^18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.5",
+    "typescript": "^5"
+  },
+  "packageManager": "pnpm@10.11.0"
+}

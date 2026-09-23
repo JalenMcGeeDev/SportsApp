@@ -1,0 +1,21 @@
+{
+  "name": "season",
+  "type": "module",
+  "private": true,
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "dev": "pnpm --filter @season/web dev",
+    "build": "turbo build",
+    "typecheck": "turbo typecheck",
+    "lint": "pnpm --filter @season/web lint",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "supabase": "^2.117.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  }
+}
