@@ -1,8 +1,8 @@
-# Season
+hen i # Season
 
 Youth sports tournament management, based on [Spec.md](Spec.md).
 
-**Status: tested domain foundation backed by Supabase (auth, Postgres persistence, RLS, and a `pg_cron`/Edge Function job dispatcher), not a production-ready implementation of the full specification.** Payments and document storage are not connected. Use sample data only; do not enter real minors' information.
+**Status: tested domain foundation backed by Supabase (auth, Postgres persistence, RLS, and a `pg_cron`/Edge Function job dispatcher), not a production-ready implementation of the full specification.** Stripe Connect payments are implemented (see below) but require live/test Stripe keys to activate; document storage is not connected. Use sample data only; do not enter real minors' information.
 
 ## Run Locally
 
@@ -20,6 +20,9 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000), or the port printed by Next
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL, used by the browser, server, and middleware clients. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public anon key for user-scoped Supabase auth/session requests. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service-role key used server-side for public tournament pages. Never exposed to the browser. |
+| `STRIPE_SECRET_KEY` | Server-side Stripe secret key, used to create Connect accounts, PaymentIntents, and refunds. Without it, Stripe routes return a clear configuration error. |
+| `STRIPE_WEBHOOK_SECRET` | Signing secret for the `stripe/webhooks` route; required to verify `account.updated` and PaymentIntent events. |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Public Stripe key used by the coach-facing pay page to render the embedded Payment Element. |
 
 Schedule generation and spectator-invite email delivery are handled out-of-band by the `process-jobs` Supabase Edge Function, dispatched on an interval by `pg_cron` (see `supabase/migrations/0002_job_dispatch.sql`) — no local worker process is needed.
 
@@ -36,10 +39,11 @@ Schedule generation and spectator-invite email delivery are handled out-of-band 
 - Draft/published schedule separation, CSV export, in-app announcements and notifications, and local manager-to-coach message records.
 - Public organization, schedule, score, bracket, and standings pages using a restricted projection that excludes player records and coach contact details.
 - Background delivery of spectator-invite emails, queued when a tournament's schedule is first published and processed out-of-band by the `process-jobs` Edge Function (via Resend, with a console-log fallback when no API key is configured).
+- Stripe Connect (Express) onboarding for organizations, gating registration from opening until onboarding is complete. A platform-wide 10% fee applies to processed payments, with an organization-configurable fee mode (absorb the fee, or pass it through to the registering team). Accepting a registration creates a Stripe PaymentIntent (destination charge) and emails the coach a link to a dedicated pay page using an embedded Stripe Payment Element. Managers can issue full or partial refunds at any time; the platform fee is retained on refund.
 
 Sample public tournament: [Autumn Invitational](http://127.0.0.1:3000/austin-youth-sports/autumn-invitational).
 
-Sample fees are unpaid. No money is charged, and there are no authenticated coach or guardian sessions. Spectator-invite emails are only actually delivered when `RESEND_API_KEY` is configured; otherwise they are logged to the Edge Function's console.
+Entry fee payments require `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`/`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` to be configured; without them, Stripe-dependent actions (connecting an account, requesting payment) fail with a clear configuration error, and there are no authenticated coach or guardian sessions. Spectator-invite emails are only actually delivered when `RESEND_API_KEY` is configured; otherwise they are logged to the Edge Function's console.
 
 ## Workspace
 

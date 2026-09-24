@@ -1,5 +1,4 @@
 import { commandSchema, gameSchema, publicTournamentSchema, workspaceSchema, type Command, type Tournament, type Workspace } from "@season/types";
-import { checkEligibility } from "./eligibility/index.ts";
 import { resolveBracket } from "./brackets/index.ts";
 import { computeStandings } from "./standings/index.ts";
 import { changedRegistrations, expandVenues, validateSchedule } from "./scheduling/index.ts";
@@ -39,6 +38,8 @@ export function applyCommand(input: Workspace, raw: Command, context: { now: str
   if ("registrationId" in command && !registration) throw new DomainError("Team registration not found", 404);
   const game = "gameId" in command ? tournament?.games.find((game) => game.id === command.gameId) : undefined;
   if ("gameId" in command && !game) throw new DomainError("Game not found", 404);
+  const contact = "contactId" in command ? tournament?.contacts.find((contact) => contact.id === command.contactId) : undefined;
+  if ("contactId" in command && !contact) throw new DomainError("Contact not found", 404);
   if (game && "version" in command && command.version !== game.version) throw new DomainError("This game changed. Refresh before saving your score or edit.", 409);
   const notify = (title: string, body: string, registrationIds: string[]) => {
     state.notifications.unshift({ id: id(), title, body, createdAt: now, read: false, registrationIds: [...new Set(registrationIds)] });
@@ -48,21 +49,40 @@ export function applyCommand(input: Workspace, raw: Command, context: { now: str
       const tournamentId = id();
       const { venues, divisions, invitees, rules, ...details } = command.data;
       const fields = expandVenues(venues, details.sport, details.startsOn, details.endsOn, details.timezone, id);
-      state.tournaments.push({ ...details, id: tournamentId, slug: `${command.data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${tournamentId.slice(0, 6)}`, status: "draft", publishedAt: null, rules: { ...rules, winPoints: 3, tiePoints: 1, lossPoints: 0, forfeitPoints: 3, shutoutPoints: 0, differentialCap: 5, tiebreakers: ["head_to_head", "difference", "against", "coin_flip"] }, divisions: divisions.map((division) => ({ ...division, id: id() })), fields, registrations: [], games: [], publishedGames: [], invitees, invitesSentAt: null, registrationInvitesSentAt: null });
+      state.tournaments.push({ ...details, id: tournamentId, slug: `${command.data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${tournamentId.slice(0, 6)}`, status: "draft", publishedAt: null, rules: { ...rules, winPoints: 3, tiePoints: 1, lossPoints: 0, forfeitPoints: 3, shutoutPoints: 0, differentialCap: 5, tiebreakers: ["head_to_head", "difference", "against", "coin_flip"] }, divisions: divisions.map((division) => ({ ...division, id: id() })), fields, registrations: [], games: [], publishedGames: [], invitees, invitesSentAt: null, registrationInvitesSentAt: null, followers: [], contacts: [] });
       break;
     }
     case "update_tournament": {
       if (tournament!.games.length && JSON.stringify(command.rules) !== JSON.stringify(tournament!.rules)) throw new DomainError("Rules are locked after games are generated. Create a new tournament to change competition rules.");
       const enteringRegistrationOpen = command.status === "registration_open" && tournament!.status !== "registration_open";
+      if (enteringRegistrationOpen && !state.organization.stripeOnboardingComplete) throw new DomainError("Connect and finish onboarding your Stripe account before opening registration.", 422);
       tournament!.name = command.name; tournament!.status = command.status; tournament!.rules = command.rules;
       if (enteringRegistrationOpen && tournament!.invitees.length && !tournament!.registrationInvitesSentAt) {
-        state.inviteJobs.unshift({ id: id(), tournamentId: tournament!.id, kind: "registration_open", status: "queued", createdAt: now, completedAt: null, recipientCount: tournament!.invitees.length, error: null });
+        state.inviteJobs.unshift({ id: id(), tournamentId: tournament!.id, kind: "registration_open", announcementId: null, status: "queued", createdAt: now, completedAt: null, recipientCount: tournament!.invitees.length, error: null });
       }
+      break;
+    }
+    case "delete_tournament": {
+      state.tournaments = state.tournaments.filter((item) => item.id !== command.tournamentId);
       break;
     }
     case "add_division": tournament!.divisions.push({ ...command.division, id: id() }); break;
     case "add_venue": {
       tournament!.fields.push(...expandVenues([command.venue], tournament!.sport, tournament!.startsOn, tournament!.endsOn, tournament!.timezone, id));
+      break;
+    }
+    case "add_contact": {
+      if (tournament!.contacts.some((contact) => contact.email === command.email)) throw new DomainError("This email is already on the contact list.");
+      tournament!.contacts.push({ id: id(), name: command.name, email: command.email, note: command.note });
+      break;
+    }
+    case "update_contact": {
+      if (tournament!.contacts.some((item) => item.id !== command.contactId && item.email === command.email)) throw new DomainError("This email is already on the contact list.");
+      contact!.name = command.name; contact!.email = command.email; contact!.note = command.note;
+      break;
+    }
+    case "delete_contact": {
+      tournament!.contacts = tournament!.contacts.filter((item) => item.id !== command.contactId);
       break;
     }
     case "register_team": {
@@ -73,7 +93,7 @@ export function applyCommand(input: Workspace, raw: Command, context: { now: str
       const full = tournament!.registrations.filter((team) => team.divisionId === division.id && team.status === "accepted").length >= division.maxTeams;
       const teamId = id();
       const registrationId = id();
-      tournament!.registrations.push({ ...command.data, id: registrationId, teamId, status: full ? "waitlisted" : "submitted", paymentStatus: "unpaid", amountCents: division.entryFeeCents, refundedCents: 0, seed: tournament!.registrations.length + 1, pool: "A", waitlistPosition: full ? tournament!.registrations.filter((team) => team.divisionId === division.id && team.status === "waitlisted").length + 1 : null, rosterApproved: false, checkIn: "not_checked_in", players: [] });
+      tournament!.registrations.push({ ...command.data, id: registrationId, teamId, status: full ? "waitlisted" : "submitted", paymentStatus: "unpaid", amountCents: division.entryFeeCents, refundedCents: 0, platformFeeCents: 0, stripePaymentIntentId: null, stripeRefundId: null, stripeCustomerId: null, stripeInvoiceId: null, invoiceSentAt: null, seed: tournament!.registrations.length + 1, pool: "A", waitlistPosition: full ? tournament!.registrations.filter((team) => team.divisionId === division.id && team.status === "waitlisted").length + 1 : null, rosterApproved: false, checkIn: "not_checked_in", players: [] });
       notify("New registration", `${command.data.teamName} ${full ? "joined the waitlist" : "submitted a registration"}.`, [registrationId]);
       break;
     }
@@ -83,6 +103,10 @@ export function applyCommand(input: Workspace, raw: Command, context: { now: str
       const accepted = tournament!.registrations.filter((team) => team.divisionId === division.id && team.status === "accepted" && team.id !== registration!.id).length;
       if (command.status === "accepted" && accepted >= division.maxTeams) throw new DomainError("Division is full. Increase capacity before accepting this team.");
       registration!.status = command.status;
+      if (command.status === "accepted" && !tournament!.contacts.some((contact) => contact.email === registration!.coachEmail)) {
+        tournament!.contacts.push({ id: id(), name: registration!.coachName, email: registration!.coachEmail, note: `${registration!.teamName} - Coach` });
+      }
+      if (command.status === "accepted" && registration!.amountCents === 0 && registration!.paymentStatus === "unpaid") registration!.paymentStatus = "paid";
       registration!.waitlistPosition = command.status === "waitlisted" ? tournament!.registrations.filter((team) => team.divisionId === division.id && team.status === "waitlisted" && team.id !== registration!.id).length + 1 : null;
       tournament!.registrations.filter((team) => team.divisionId === division.id && team.status === "waitlisted").sort((left, right) => (left.waitlistPosition ?? 0) - (right.waitlistPosition ?? 0)).forEach((team, index) => { team.waitlistPosition = index + 1; });
       notify("Registration updated", `${registration!.teamName}: ${command.status}.`, [registration!.id]);
@@ -97,9 +121,6 @@ export function applyCommand(input: Workspace, raw: Command, context: { now: str
       registration!.rosterApproved = false; break;
     }
     case "approve_roster": {
-      const division = tournament!.divisions.find((division) => division.id === registration!.divisionId)!;
-      const result = checkEligibility(registration!.players, division.eligibility);
-      if (!result.approved) throw new DomainError("Roster does not meet eligibility requirements.", 422, result.issues.map((issue) => `${issue.playerName}: ${issue.message}`));
       registration!.rosterApproved = true; notify("Roster approved", registration!.teamName, [registration!.id]); break;
     }
     case "generate_schedule": {
@@ -120,7 +141,7 @@ export function applyCommand(input: Workspace, raw: Command, context: { now: str
       if (tournament!.status !== "in_progress") tournament!.status = "scheduled";
       if (affected.length) notify("Schedule published", `${tournament!.name}: schedule updated for ${affected.length} teams.`, affected);
       if (firstPublish && tournament!.invitees.length && !tournament!.invitesSentAt) {
-        state.inviteJobs.unshift({ id: id(), tournamentId: tournament!.id, kind: "schedule_published", status: "queued", createdAt: now, completedAt: null, recipientCount: tournament!.invitees.length, error: null });
+        state.inviteJobs.unshift({ id: id(), tournamentId: tournament!.id, kind: "schedule_published", announcementId: null, status: "queued", createdAt: now, completedAt: null, recipientCount: tournament!.invitees.length, error: null });
       }
       break;
     }
@@ -159,10 +180,18 @@ export function applyCommand(input: Workspace, raw: Command, context: { now: str
       notify("Game status changed", `${game!.label}: ${command.status.replaceAll("_", " ")}.`, [game!.homeId, game!.awayId].filter((id): id is string => !!id)); break;
     }
     case "announce": {
-      const recipients = tournament!.registrations.filter((team) => team.status === "accepted" && (command.data.audience === "tournament" || (command.data.audience === "division" ? team.divisionId === command.data.audienceId : team.id === command.data.audienceId)));
-      if (!recipients.length) throw new DomainError("No accepted teams match the selected audience.");
-      state.announcements.unshift({ ...command.data, id: id(), tournamentId: tournament!.id, sentAt: now, recipientCount: recipients.length });
-      notify(command.data.subject, command.data.body, recipients.map((team) => team.id)); break;
+      const contacts = command.data.contactIds.length ? tournament!.contacts.filter((contact) => command.data.contactIds.includes(contact.id)) : tournament!.contacts;
+      if (!contacts.length) throw new DomainError("No contacts match the selected audience.");
+      const announcementId = id();
+      state.announcements.unshift({ ...command.data, id: announcementId, tournamentId: tournament!.id, sentAt: now, recipientCount: contacts.length });
+      const emailRecipients = [...new Set([...tournament!.followers, ...contacts.map((contact) => contact.email)])];
+      if (emailRecipients.length) state.inviteJobs.unshift({ id: id(), tournamentId: tournament!.id, kind: "announcement", announcementId, status: "queued", createdAt: now, completedAt: null, recipientCount: emailRecipients.length, error: null });
+      break;
+    }
+    case "follow_tournament": {
+      if (tournament!.followers.length >= 500) throw new DomainError("This tournament has reached its follower limit.", 422);
+      if (!tournament!.followers.includes(command.email)) tournament!.followers.push(command.email);
+      break;
     }
     case "message": state.messages.push({ id: id(), tournamentId: tournament!.id, registrationId: registration!.id, sender: "manager", body: command.body, sentAt: now }); break;
     case "read_notifications": state.notifications.forEach((notification) => { notification.read = true; }); break;
@@ -172,6 +201,38 @@ export function applyCommand(input: Workspace, raw: Command, context: { now: str
       if (command.logoUrl !== undefined) state.organization.logoUrl = command.logoUrl;
       if (command.replyToEmail !== undefined) state.organization.replyToEmail = command.replyToEmail || null;
       break;
+    case "update_fee_mode": state.organization.feeMode = command.feeMode; break;
+    case "record_stripe_account": state.organization.stripeConnectAccountId = command.stripeConnectAccountId; state.organization.stripeOnboardingComplete = false; break;
+    case "update_stripe_onboarding": state.organization.stripeOnboardingComplete = command.complete; break;
+    case "record_payment_intent":
+      registration!.stripePaymentIntentId = command.paymentIntentId; registration!.platformFeeCents = command.platformFeeCents; registration!.amountCents = command.totalChargedCents; registration!.paymentStatus = "processing";
+      break;
+    case "record_payment_status": {
+      if (registration!.stripePaymentIntentId !== command.paymentIntentId) throw new DomainError("Payment intent does not match this registration.", 409);
+      registration!.paymentStatus = command.status;
+      if (command.status === "paid") notify("Payment received", `${registration!.teamName}: entry fee paid.`, [registration!.id]);
+      break;
+    }
+    case "refund_registration": {
+      if (command.amountCents > registration!.amountCents - registration!.refundedCents) throw new DomainError("Refund amount exceeds the amount paid.", 422);
+      registration!.refundedCents += command.amountCents; registration!.stripeRefundId = command.stripeRefundId;
+      registration!.paymentStatus = registration!.refundedCents >= registration!.amountCents ? "refunded" : "partially_refunded";
+      notify("Refund issued", `${registration!.teamName}: refunded.`, [registration!.id]);
+      break;
+    }
+    case "record_invoice_sent":
+      registration!.stripeCustomerId = command.stripeCustomerId; registration!.stripeInvoiceId = command.stripeInvoiceId; registration!.invoiceSentAt = now;
+      break;
+    case "record_invoice_status": {
+      if (registration!.stripeInvoiceId !== command.stripeInvoiceId) throw new DomainError("Invoice does not match this registration.", 409);
+      if (command.status === "paid") {
+        registration!.paymentStatus = "paid";
+        if (command.paymentIntentId) registration!.stripePaymentIntentId = command.paymentIntentId;
+        notify("Payment received", `${registration!.teamName}: entry fee paid.`, [registration!.id]);
+      } else if (command.status === "failed") registration!.paymentStatus = "failed";
+      else if (command.status === "voided") registration!.paymentStatus = "unpaid";
+      break;
+    }
   }
   state.audit.unshift({ id: id(), action: command.type, entityId: game?.id ?? registration?.id ?? tournament?.id ?? "organization", at: now, detail: command.type === "move_game" && command.force ? command.reason : command.type.replaceAll("_", " ") });
   state.revision++;

@@ -211,7 +211,7 @@ export type CapacityInput = {
 };
 export type CapacityDivisionField = "maxTeams" | "guaranteedGames" | "format";
 export type CapacitySetupError = { divisionIndex: number; fields: CapacityDivisionField[]; message: string };
-export type CapacityIssue = { divisionIndex: number; divisionName: string; unplacedCount: number; totalGames: number };
+export type CapacityIssue = { divisionIndex: number; divisionName: string; maxTeams: number; unplacedCount: number; totalGames: number };
 export type CapacityResult = { feasible: boolean; setupErrors: CapacitySetupError[]; issues: CapacityIssue[]; totalGames: number; fieldCount: number; resolvedByExtraField: boolean };
 
 /** Rewrites the (pool/bracket-oriented) errors thrown by generateCompetition into guidance that points at the actual wizard field(s) to change. */
@@ -239,7 +239,7 @@ function buildCapacityScenario(input: CapacityInput, extraField: boolean) {
     const divisionId = `preview-division-${index}`;
     const division: Division = { id: divisionId, name: draft.name || `Division ${index + 1}`, format: draft.format as Division["format"], maxTeams: draft.maxTeams, guaranteedGames: draft.guaranteedGames, advancePerPool: draft.advancePerPool, entryFeeCents: 0, earliestTime: draft.earliestTime, latestTime: draft.latestTime, eligibility: { earliestBirthdate: "2000-01-01", latestBirthdate: "2020-01-01", rosterMin: 1, rosterMax: 99, requiredDocuments: [], waiverVersion: 1 } };
     divisions.push(division);
-    const teams: Registration[] = Array.from({ length: draft.maxTeams }, (_, teamIndex) => ({ id: `${divisionId}-team-${teamIndex}`, teamId: `${divisionId}-team-${teamIndex}`, divisionId, teamName: `Team ${teamIndex + 1}`, clubName: "", city: "", coachName: "Coach", coachEmail: "coach@example.com", seed: teamIndex + 1, pool: "A", status: "accepted", paymentStatus: "paid", amountCents: 0, refundedCents: 0, waitlistPosition: null, rosterApproved: true, checkIn: "not_checked_in", players: [] }));
+    const teams: Registration[] = Array.from({ length: draft.maxTeams }, (_, teamIndex) => ({ id: `${divisionId}-team-${teamIndex}`, teamId: `${divisionId}-team-${teamIndex}`, divisionId, teamName: `Team ${teamIndex + 1}`, clubName: "", city: "", coachName: "Coach", coachEmail: "coach@example.com", seed: teamIndex + 1, pool: "A", status: "accepted", paymentStatus: "paid", amountCents: 0, refundedCents: 0, platformFeeCents: 0, stripePaymentIntentId: null, stripeRefundId: null, stripeCustomerId: null, stripeInvoiceId: null, invoiceSentAt: null, waitlistPosition: null, rosterApproved: true, checkIn: "not_checked_in", players: [] }));
     registrations.push(...teams);
     try { games.push(...generateCompetition(division, teams)); }
     catch (error) { setupErrors.push({ divisionIndex: index, ...explainCapacitySetupError(draft, error instanceof Error ? error.message : String(error)) }); }
@@ -256,6 +256,7 @@ export function estimateCapacity(input: CapacityInput): CapacityResult {
   const scenario = buildCapacityScenario(input, false);
   const scheduled = generateSchedule({ games: scenario.games, fields: scenario.fields, divisions: scenario.divisions, registrations: scenario.registrations, rules: scenario.rules, sport: input.sport, timezone: input.timezone }, 1);
   const divisionNames = new Map(scenario.divisions.map((division) => [division.id, division.name]));
+  const divisionMaxTeams = new Map(scenario.divisions.map((division) => [division.id, division.maxTeams]));
   const gameDivisions = new Map(scenario.games.map((game) => [game.id, game.divisionId]));
   const unplacedByDivision = new Map<string, number>();
   for (const gameId of scheduled.unplaced) {
@@ -263,7 +264,7 @@ export function estimateCapacity(input: CapacityInput): CapacityResult {
     if (divisionId) unplacedByDivision.set(divisionId, (unplacedByDivision.get(divisionId) ?? 0) + 1);
   }
   const divisionIndexById = new Map(scenario.divisions.map((division, index) => [division.id, index]));
-  const issues: CapacityIssue[] = [...unplacedByDivision.entries()].map(([divisionId, unplacedCount]) => ({ divisionIndex: divisionIndexById.get(divisionId) ?? 0, divisionName: divisionNames.get(divisionId) ?? divisionId, unplacedCount, totalGames: scenario.games.filter((game) => game.divisionId === divisionId).length }));
+  const issues: CapacityIssue[] = [...unplacedByDivision.entries()].map(([divisionId, unplacedCount]) => ({ divisionIndex: divisionIndexById.get(divisionId) ?? 0, divisionName: divisionNames.get(divisionId) ?? divisionId, maxTeams: divisionMaxTeams.get(divisionId) ?? 0, unplacedCount, totalGames: scenario.games.filter((game) => game.divisionId === divisionId).length }));
   let resolvedByExtraField = false;
   if (issues.length) {
     const withExtraField = buildCapacityScenario(input, true);

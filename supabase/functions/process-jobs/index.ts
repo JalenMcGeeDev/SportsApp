@@ -1,8 +1,8 @@
 import { generateCompetition, generateSchedule, validateSchedule } from "@season/core";
 import { mutateWorkspace, readWorkspace } from "@season/data";
-import type { Tournament } from "@season/types";
+import type { Announcement, Tournament } from "@season/types";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { sendSpectatorInvites } from "./email.ts";
+import { sendAnnouncementEmail, sendSpectatorInvites } from "./email.ts";
 
 // Invoked per-org by the "season-dispatch-jobs" pg_cron job (see supabase/migrations),
 // running job dispatch as a Vercel-deployable Edge Function instead of a standalone Node process.
@@ -63,7 +63,8 @@ async function processInviteJob(supabase: SupabaseClient, orgId: string, queuedI
   if (!queuedId) return;
   let tournament: Tournament | undefined;
   let organizationSlug = "";
-  let kind: "registration_open" | "schedule_published" = "schedule_published";
+  let kind: "registration_open" | "schedule_published" | "announcement" = "schedule_published";
+  let announcement: Announcement | undefined;
   await mutateWorkspace(supabase, orgId, (state) => {
     const job = state.inviteJobs.find((job) => job.id === queuedId);
     if (!job || job.status !== "queued") return state;
@@ -71,16 +72,24 @@ async function processInviteJob(supabase: SupabaseClient, orgId: string, queuedI
     tournament = structuredClone(state.tournaments.find((item) => item.id === job.tournamentId));
     organizationSlug = state.organization.slug;
     kind = job.kind;
+    if (job.kind === "announcement") announcement = state.announcements.find((item) => item.id === job.announcementId);
     return state;
   });
   if (!tournament) return;
   try {
-    await sendSpectatorInvites(tournament, organizationSlug, tournament.invitees, kind);
+    if (kind === "announcement") {
+      if (!announcement) throw new Error("Announcement not found");
+      const contactEmails = tournament.contacts.filter((contact) => !announcement!.contactIds.length || announcement!.contactIds.includes(contact.id)).map((contact) => contact.email);
+      const recipients = [...new Set([...tournament.followers, ...contactEmails])];
+      await sendAnnouncementEmail(tournament, organizationSlug, recipients, announcement.subject, announcement.body);
+    } else {
+      await sendSpectatorInvites(tournament, organizationSlug, tournament.invitees, kind);
+    }
     await mutateWorkspace(supabase, orgId, (state) => {
       const job = state.inviteJobs.find((job) => job.id === queuedId)!;
       job.status = "succeeded"; job.completedAt = new Date().toISOString();
       const current = state.tournaments.find((item) => item.id === tournament!.id);
-      if (current) { if (job.kind === "registration_open") current.registrationInvitesSentAt = job.completedAt; else current.invitesSentAt = job.completedAt; }
+      if (current && job.kind !== "announcement") { if (job.kind === "registration_open") current.registrationInvitesSentAt = job.completedAt; else current.invitesSentAt = job.completedAt; }
       state.revision++; return state;
     });
   } catch (error) {

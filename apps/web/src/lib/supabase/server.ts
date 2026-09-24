@@ -7,6 +7,10 @@ export async function createClient() {
   if (!url || !anonKey) throw new Error("Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
   const cookieStore = await cookies();
   return createServerClient(url, anonKey, {
+    // Next.js patches the global `fetch` and can otherwise cache/reuse a stale response for
+    // repeated identical Supabase REST calls within a request lifecycle (e.g. the CAS read in
+    // mutateWorkspace right after a prior failed write) — force every Supabase call to bypass it.
+    global: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, { ...init, cache: "no-store" }) },
     cookies: {
       getAll: () => cookieStore.getAll(),
       setAll: (cookiesToSet: { name: string; value: string; options: CookieOptionsWithName }[]) => {

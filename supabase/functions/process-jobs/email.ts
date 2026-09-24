@@ -25,3 +25,23 @@ export async function sendSpectatorInvites(tournament: Tournament, organizationS
     if (error) throw new Error(error.message);
   }
 }
+
+// Sent to public followers (self-subscribed via the tournament details page) whenever a director posts an announcement.
+export async function sendAnnouncementEmail(tournament: Tournament, organizationSlug: string, recipients: string[], subject: string, body: string) {
+  if (!recipients.length) return;
+  const url = `${publicBaseUrl}/${organizationSlug}/${tournament.slug}`;
+  const html = `<p><strong>${tournament.name}</strong></p><p>${body.replace(/\n/g, "<br />")}</p><p><a href="${url}">${url}</a></p>`;
+  const text = `${tournament.name}\n\n${body}\n\n${url}`;
+  const apiKey = Deno.env.get("RESEND_API_KEY");
+  if (!apiKey) {
+    console.log(`[email] RESEND_API_KEY is not set. Logging announcement "${subject}" for ${recipients.length} follower(s) of "${tournament.name}" instead of sending:`);
+    for (const email of recipients) console.log(`[email]   -> ${email}`);
+    return;
+  }
+  const resend = new Resend(apiKey);
+  const from = Deno.env.get("EMAIL_FROM") ?? "Season <no-reply@season.app>";
+  for (const email of recipients) {
+    const { error } = await resend.emails.send({ from, to: email, subject, html, text });
+    if (error) throw new Error(error.message);
+  }
+}

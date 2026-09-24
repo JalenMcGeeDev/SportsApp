@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Brand } from "@/components/shared";
 
-export const metadata: Metadata = { title: "Tournament formats | Season" };
+export const metadata: Metadata = { title: "Docs | Season" };
 
 const formats: { id: string; label: string; summary: string; details: string[] }[] = [
   {
@@ -61,25 +61,127 @@ const formats: { id: string; label: string; summary: string; details: string[] }
   },
 ];
 
-export default function FormatsDocsPage() {
+const points: { id: string; label: string; summary: string; details: string[] }[] = [
+  {
+    id: "match-points",
+    label: "Match points",
+    summary: "Every completed game adds points to both teams' totals based on the result.",
+    details: [
+      "A win awards the tournament's configured win points (3 by default).",
+      "A draw awards the configured draw points (1 by default).",
+      "A loss awards the configured loss points (0 by default).",
+      "These totals accumulate across every completed pool or round-robin game to produce each team's \u201ccompetition points\u201d \u2014 the number shown in the Points column.",
+      "The same win/draw/loss math is used for every sport Season supports. Not every sport allows a tied final score \u2014 basketball, baseball, softball, volleyball, and pickleball games are usually decided outright \u2014 so the draw line simply won't show up for those unless a game actually ends level.",
+    ],
+  },
+  {
+    id: "forfeits",
+    label: "Forfeits",
+    summary: "A forfeited game still counts, but the winning team earns forfeit points instead of standard win points.",
+    details: [
+      "If a team can't field a legal roster or fails to show, the game is recorded as a forfeit rather than a played result.",
+      "The winning team earns the tournament's forfeit points \u2014 a separate value from win points, since directors sometimes want forfeits worth less (or the same).",
+      "Forfeited games never earn a shutout bonus, even if the score reads as a shutout.",
+    ],
+  },
+  {
+    id: "shutout-bonus",
+    label: "Shutout bonus",
+    summary: "Teams that win without allowing a single point can earn an extra bonus point.",
+    details: [
+      "If a team wins and its opponent scores zero, it earns the tournament's shutout bonus on top of its win points.",
+      "The shutout bonus only applies to games decided on the field \u2014 not forfeits.",
+      "Many tournaments leave this at 0 (no bonus); directors can turn it on to reward strong defense.",
+    ],
+  },
+  {
+    id: "differential",
+    label: "Point differential",
+    summary: "The margin of victory in each game, capped so no single blowout skews the standings.",
+    details: [
+      "Differential is the scored-minus-allowed margin for each game, added up across every completed game.",
+      "A configurable \u201cdifferential cap\u201d limits how much any one game can swing a team's differential \u2014 for example, a 30-point win only counts as +5 if the cap is 5.",
+      "Differential does not add to competition points \u2014 it's only used as a tiebreaker.",
+    ],
+  },
+  {
+    id: "tiebreakers",
+    label: "Tiebreakers",
+    summary: "When teams finish with the same competition points, an ordered list of tiebreakers decides the order.",
+    details: [
+      "Head-to-head record \u2014 compares results only among the tied teams.",
+      "Head-to-head differential \u2014 compares capped point differential only among the tied teams.",
+      "Point differential \u2014 total capped differential across all games.",
+      "Fewest points allowed / most points scored \u2014 compares totals across all games.",
+      "Fewest disciplinary points \u2014 rewards cleaner play.",
+      "Coin flip \u2014 a seeded, reproducible random draw used only as a last resort.",
+      "Manual \u2014 the tournament director resolves the tie by hand.",
+      "Each tournament picks its own ordered list of these criteria. They're applied one at a time \u2014 as soon as one separates a group of tied teams, the rest move on, and later criteria only apply to teams still tied.",
+    ],
+  },
+  {
+    id: "why-this-rank",
+    label: "\u201cWhy this rank?\u201d",
+    summary: "Every standings table shows its work \u2014 no more guessing how a team landed where it did.",
+    details: [
+      "Expand \u201cWhy this rank?\u201d under any team's row to see the exact tiebreakers that applied to it, in the order they were checked.",
+      "Hover (or focus) the points line in that list to see the win/draw/loss/forfeit/shutout math behind the total.",
+    ],
+  },
+];
+
+const groups = [
+  { id: "formats", label: "Tournament formats", items: formats },
+  { id: "points", label: "How points work", items: points },
+];
+
+export default function DocsPage() {
   return (
-    <main className="public-shell">
+    <main className="public-shell docs-page">
       <header className="public-header"><Brand /></header>
-      <h1 style={{ marginTop: 30 }}>Tournament formats</h1>
-      <p className="docs-intro">Every division picks one of the formats below. This page explains how each one works and how teams advance.</p>
-      <div className="docs-format-list">
-        {formats.map((format) => (
-          <section className="venue-card docs-format-card" id={format.id} key={format.id}>
-            <h2>{format.label}</h2>
-            <div className="docs-format-body">
+      <h1 style={{ marginTop: 30 }}>Docs</h1>
+      <p className="docs-intro">Everything about how tournament formats and standings work, in one place.</p>
+      <div className="docs-shell">
+        <nav className="docs-nav" aria-label="Docs sections">
+          {groups.map((group) => (
+            <div className="docs-nav-group" key={group.id}>
+              <a className="docs-nav-heading" href={`#${group.id}`}>{group.label}</a>
               <ul>
-                <li><strong>{format.summary}</strong></li>
-                {format.details.map((detail, index) => <li key={index}>{detail}</li>)}
+                {group.items.map((item) => <li key={item.id}><a href={`#${item.id}`}>{item.label}</a></li>)}
               </ul>
-              <FormatDiagram id={format.id} />
             </div>
+          ))}
+        </nav>
+        <div className="docs-content">
+          <section className="docs-format-list">
+            <h2 id="formats" className="docs-group-title">Tournament formats</h2>
+            {formats.map((format) => (
+              <section className="venue-card docs-format-card" id={format.id} key={format.id}>
+                <h3>{format.label}</h3>
+                <div className="docs-format-body">
+                  <ul>
+                    <li><strong>{format.summary}</strong></li>
+                    {format.details.map((detail, index) => <li key={index}>{detail}</li>)}
+                  </ul>
+                  <FormatDiagram id={format.id} />
+                </div>
+              </section>
+            ))}
           </section>
-        ))}
+          <section className="docs-format-list">
+            <h2 id="points" className="docs-group-title">How points work</h2>
+            <p className="docs-intro">The points and tiebreaker engine only deals in scored/conceded numbers and game results \u2014 it works identically for every supported sport (soccer, basketball, baseball, softball, volleyball, flag football, and pickleball). No sport gets special-cased math.</p>
+            {points.map((section) => (
+              <section className="venue-card docs-format-card" id={section.id} key={section.id}>
+                <h3>{section.label}</h3>
+                <ul>
+                  <li><strong>{section.summary}</strong></li>
+                  {section.details.map((detail, index) => <li key={index}>{detail}</li>)}
+                </ul>
+              </section>
+            ))}
+          </section>
+        </div>
       </div>
     </main>
   );

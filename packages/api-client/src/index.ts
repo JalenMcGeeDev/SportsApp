@@ -22,5 +22,11 @@ export function createApiClient(baseUrl = "", transport: typeof fetch = fetch) {
     execute: (revision: number, command: Command) => request("POST", mutationSchema.parse({ revision, command })),
     sendRegistrationEmail: (tournamentId: string, registrationId: string, subject: string, body: string) =>
       raw("/api/v1/workspace/registration-email", "POST", { tournamentId, registrationId, subject, body }) as Promise<{ ok: true }>,
+    startStripeConnect: () => raw("/api/v1/workspace/stripe/connect", "POST") as Promise<{ url: string }>,
+    syncStripeStatus: async () => workspaceSchema.parse(await raw("/api/v1/workspace/stripe/status", "POST")),
+    refundRegistration: async (tournamentId: string, registrationId: string, amountCents: number) =>
+      workspaceSchema.parse(await raw("/api/v1/workspace/stripe/refund", "POST", { tournamentId, registrationId, amountCents })),
+    sendInvoice: async (tournamentId: string, registrationId: string) =>
+      workspaceSchema.parse(await raw("/api/v1/workspace/stripe/invoice", "POST", { tournamentId, registrationId })),
   };
 }

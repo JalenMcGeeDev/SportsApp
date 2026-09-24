@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, Check, ChevronLeft, ChevronRight, Info, LoaderCircle, Mail, MapPin, Plus, Save, ShieldCheck, Trash2, Trophy, X } from "lucide-react";
+import { Building2, Check, ChevronLeft, ChevronRight, Dice5, Info, LoaderCircle, Plus, Save, ShieldCheck, Trash2, Trophy, X } from "lucide-react";
 import { estimateCapacity, type CapacityResult } from "@season/core";
 import { ApiError } from "@season/api-client";
 import type { Command, Tournament, Workspace } from "@season/types";
@@ -17,8 +17,7 @@ const formatDescriptions: Record<string, string> = {
   double_elim: "Double-elimination bracket. A team gets a second chance in a losers bracket before elimination.",
 };
 function formatLabel(format: string) { return format.split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" "); }
-const steps = ["Details", "Venues", "Rules & Divisions", "Invite spectators", "Review"];
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const steps = ["Details", "Venues", "Rules & Divisions", "Review"];
 
 type PlayAreaDraft = { name: string };
 type VenueDraft = { name: string; address: string; playAreas: PlayAreaDraft[] };
@@ -28,11 +27,13 @@ type DivisionDraft = {
 };
 type Details = { name: string; sport: string; startsOn: string; endsOn: string; timezone: string; description: string };
 type RulesDraft = { gameMinutes: number; bufferMinutes: number; restMinutes: number; maxGamesPerDay: number };
-type Props = { workspace: Workspace; busy: boolean; execute: (command: Command) => Promise<Workspace | undefined>; onClose: () => void; onCreated: (tournament: Tournament, message: string) => void };
+type Props = { workspace: Workspace; busy: boolean; execute: (command: Command, base?: Workspace | null) => Promise<Workspace | undefined>; onClose: () => void; onCreated: (tournament: Tournament, message: string) => void };
 
 function defaultVenue(sport: string): VenueDraft { return { name: "", address: "", playAreas: [{ name: `${playAreaLabel(sport)} 1` }] }; }
 // Derived from the browser so the wizard doesn't need to ask the organizer to pick one.
 function detectTimezone(): string { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return "UTC"; } }
+function defaultDetails(): Details { return { name: "", sport: "soccer", startsOn: "2026-10-10", endsOn: "2026-10-11", timezone: detectTimezone(), description: "" }; }
+function defaultRules(): RulesDraft { return { gameMinutes: 40, bufferMinutes: 10, restMinutes: 30, maxGamesPerDay: 4 }; }
 // Venues are the source of truth for where a tournament happens, so the wizard derives a display location from them instead of asking for one directly.
 function deriveLocation(venues: VenueDraft[]): string { return [...new Set(venues.map((venue) => venue.address.trim()).filter(Boolean))].join(" \u2022 ").slice(0, 100); }
 function defaultDivision(): DivisionDraft {
@@ -40,14 +41,13 @@ function defaultDivision(): DivisionDraft {
 }
 
 export function TournamentWizard({ workspace, busy, execute, onClose, onCreated }: Props) {
+  const stripeConnected = workspace.organization.stripeOnboardingComplete;
   const [step, setStep] = useState(0);
   const [copyFromId, setCopyFromId] = useState("");
-  const [details, setDetails] = useState<Details>({ name: "", sport: "soccer", startsOn: "2026-10-10", endsOn: "2026-10-11", timezone: detectTimezone(), description: "" });
-  const [rules, setRules] = useState<RulesDraft>({ gameMinutes: 40, bufferMinutes: 10, restMinutes: 30, maxGamesPerDay: 4 });
+  const [details, setDetails] = useState<Details>(defaultDetails());
+  const [rules, setRules] = useState<RulesDraft>(defaultRules());
   const [venues, setVenues] = useState<VenueDraft[]>([defaultVenue("soccer")]);
   const [divisions, setDivisions] = useState<DivisionDraft[]>([defaultDivision()]);
-  const [invitees, setInvitees] = useState<string[]>([]);
-  const [inviteInput, setInviteInput] = useState("");
   const [stepError, setStepError] = useState("");
   const [error, setError] = useState("");
   const [errorDetails, setErrorDetails] = useState<string[]>([]);
@@ -57,6 +57,13 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
   function updateDetail<K extends keyof Details>(key: K, value: Details[K]) { setDetails((current) => ({ ...current, [key]: value })); }
   function updateRule<K extends keyof RulesDraft>(key: K, value: RulesDraft[K]) { setRules((current) => ({ ...current, [key]: value })); }
   function goFix(targetStep: number) { setStep(targetStep); setCapacity(null); }
+
+  function updateSport(sport: string) {
+    const previousLabel = playAreaLabel(details.sport);
+    const nextLabel = playAreaLabel(sport);
+    if (previousLabel !== nextLabel) setVenues((current) => current.map((venue) => ({ ...venue, playAreas: venue.playAreas.map((area, index) => area.name === `${previousLabel} ${index + 1}` ? { name: `${nextLabel} ${index + 1}` } : area) })));
+    updateDetail("sport", sport);
+  }
 
   function runCapacityCheck() {
     return estimateCapacity({
@@ -81,7 +88,6 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
     }
     setVenues(groups.size ? [...groups.values()] : [defaultVenue(source.sport)]);
     setDivisions(source.divisions.length ? source.divisions.map((division) => ({ name: division.name, format: division.format, maxTeams: division.maxTeams, guaranteedGames: division.guaranteedGames, advancePerPool: division.advancePerPool, entryFeeCents: division.entryFeeCents, earliestTime: division.earliestTime, latestTime: division.latestTime, earliestBirthdate: division.eligibility.earliestBirthdate, latestBirthdate: division.eligibility.latestBirthdate, rosterMin: division.eligibility.rosterMin, rosterMax: division.eligibility.rosterMax })) : [defaultDivision()]);
-    setInvitees([...source.invitees]);
     setStepError("");
   }
 
@@ -95,15 +101,6 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
   function updateDivision<K extends keyof DivisionDraft>(index: number, key: K, value: DivisionDraft[K]) { setDivisions((current) => current.map((division, position) => position === index ? { ...division, [key]: value } : division)); }
   function addDivision() { setDivisions((current) => [...current, defaultDivision()]); }
   function removeDivision(index: number) { setDivisions((current) => current.filter((_, position) => position !== index)); }
-
-  function addInvitee() {
-    const email = inviteInput.trim().toLowerCase();
-    if (!email) return;
-    if (!emailPattern.test(email)) { setStepError("Enter a valid email address."); return; }
-    if (invitees.includes(email)) { setStepError("That email has already been added."); setInviteInput(""); return; }
-    setInvitees((current) => [...current, email]); setInviteInput(""); setStepError("");
-  }
-  function removeInvitee(email: string) { setInvitees((current) => current.filter((item) => item !== email)); }
 
   function validateStep(): boolean {
     setStepError("");
@@ -125,6 +122,8 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
       for (const division of divisions) {
         if (division.name.trim().length < 2) { setStepError("Every division needs a name."); return false; }
         if (division.earliestTime >= division.latestTime) { setStepError("Each division's earliest game time must be before its latest finish time."); return false; }
+        if (division.earliestBirthdate >= division.latestBirthdate) { setStepError("Each division's earliest eligible birthdate must be before its latest eligible birthdate."); return false; }
+        if (division.rosterMin > division.rosterMax) { setStepError("Each division's minimum players must not exceed its maximum players."); return false; }
       }
       return true;
     }
@@ -133,6 +132,27 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
 
   function next() { if (validateStep()) { setCapacity(null); setStep((current) => Math.min(current + 1, steps.length - 1)); } }
   function back() { setStepError(""); setCapacity(null); setStep((current) => Math.max(current - 1, 0)); }
+
+  // Demo only: fills every step with realistic sample data and jumps straight to the review screen.
+  function fillDemo() {
+    const sport = "soccer";
+    setCopyFromId("");
+    setDetails({ name: "Fall Classic Invitational", sport, startsOn: "2026-11-14", endsOn: "2026-11-16", timezone: detectTimezone(), description: "A weekend club tournament for U10-U14 teams featuring pool play followed by single-elimination brackets." });
+    setRules({ gameMinutes: 40, bufferMinutes: 10, restMinutes: 30, maxGamesPerDay: 3 });
+    setVenues([
+      { name: "Zilker Sports Complex", address: "2100 Barton Springs Rd, Austin, TX", playAreas: [{ name: `${playAreaLabel(sport)} 1` }, { name: `${playAreaLabel(sport)} 2` }] },
+      { name: "Round Rock Multipurpose Complex", address: "3300 E Palm Valley Blvd, Round Rock, TX", playAreas: [{ name: `${playAreaLabel(sport)} 1` }] },
+    ]);
+    setDivisions([
+      { name: "U12 Boys", format: "pool_to_bracket", maxTeams: 12, guaranteedGames: 3, advancePerPool: 2, entryFeeCents: 35000, earliestTime: "08:00", latestTime: "18:00", earliestBirthdate: "2013-01-01", latestBirthdate: "2014-12-31", rosterMin: 8, rosterMax: 16 },
+      { name: "U14 Girls", format: "round_robin", maxTeams: 8, guaranteedGames: 4, advancePerPool: 2, entryFeeCents: 40000, earliestTime: "08:00", latestTime: "18:00", earliestBirthdate: "2011-01-01", latestBirthdate: "2012-12-31", rosterMin: 8, rosterMax: 16 },
+    ]);
+    setCapacity(null);
+    setStepError("");
+    setError("");
+    setErrorDetails([]);
+    setStep(steps.length - 1);
+  }
 
   // publish=false leaves the new tournament in "draft" status (the default); publish=true immediately follows up with an
   // update_tournament command that opens it for registration, mirroring the overview tab's "Publish tournament" button.
@@ -152,7 +172,6 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
           earliestTime: division.earliestTime, latestTime: division.latestTime,
           eligibility: { earliestBirthdate: division.earliestBirthdate, latestBirthdate: division.latestBirthdate, rosterMin: division.rosterMin, rosterMax: division.rosterMax, requiredDocuments: ["age_verification"], waiverVersion: 1 },
         })),
-        invitees,
       },
     };
     try {
@@ -165,7 +184,7 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
         return;
       }
       try {
-        const published = await execute({ type: "update_tournament", tournamentId: created.id, name: created.name, status: "registration_open", rules: created.rules });
+        const published = await execute({ type: "update_tournament", tournamentId: created.id, name: created.name, status: "registration_open", rules: created.rules }, updated);
         const finalTournament = published?.tournaments.find((item) => item.id === created.id) ?? created;
         onCreated(finalTournament, result.feasible ? "Checks passed \u2014 tournament published and open for registration!" : "Tournament published \u2014 some capacity checks did not pass.");
       } catch {
@@ -189,7 +208,7 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
     }, 0);
   }
 
-  return <Modal title="Create a tournament" onClose={onClose} wide>
+  return <Modal title="Create a tournament" onClose={onClose} wide headerAction={<button type="button" className="button small" title="Demo only: fills every step with sample data and jumps to review" onClick={fillDemo}><Dice5 size={14} />Demo</button>}>
     <div className="wizard">
     <div className="wizard-steps">{steps.map((label, index) => <div key={label} className={`wizard-step ${index === step ? "active" : ""} ${index < step ? "done" : ""}`}><span className="wizard-step-index">{index < step ? <Check size={13} /> : index + 1}</span>{label}</div>)}</div>
     {error && <div role="alert" className="form-error"><strong>{error}</strong>{errorDetails.length > 0 && <ul>{errorDetails.map((detail, index) => <li key={index}>{detail}</li>)}</ul>}</div>}
@@ -201,7 +220,7 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
       </div>}
       <fieldset><legend>Tournament info</legend><div className="dialog-form">
         <label>Tournament name<input value={details.name} onChange={(event) => updateDetail("name", event.target.value)} required minLength={3} maxLength={100} placeholder="e.g. Spring Invitational" autoFocus /></label>
-        <label>Sport<select value={details.sport} onChange={(event) => updateDetail("sport", event.target.value)}>{sports.map((sport) => <option key={sport} value={sport}>{sport.replaceAll("_", " ")}</option>)}</select></label>
+        <label>Sport<select value={details.sport} onChange={(event) => updateSport(event.target.value)}>{sports.map((sport) => <option key={sport} value={sport}>{sport.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase())}</option>)}</select></label>
         <label>Description<textarea value={details.description} onChange={(event) => updateDetail("description", event.target.value)} rows={3} maxLength={3000} placeholder="Tournament details" /></label>
       </div></fieldset>
       <fieldset><legend>Schedule</legend><div className="form-grid">
@@ -211,7 +230,6 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
     </div>}
 
     {step === 1 && <div className="dialog-form">
-      <div className="form-note"><MapPin size={15} />Add every venue where games will be played, then list its {playAreaLabel(details.sport).toLowerCase()}s. Availability is generated automatically for the tournament dates.</div>
       <div className="venue-list">{venues.map((venue, index) => <div className="venue-card" key={index}>
         <div className="venue-card-header">
           <span className="venue-card-index"><Building2 size={14} />Venue {index + 1}</span>
@@ -264,7 +282,7 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
         <div className="form-grid">
           <div className="field">
             <label>
-              <span className="field-label-row">Format<a className="field-info-link" href={`/docs/formats#${division.format}`} target="_blank" rel="noopener noreferrer"><Info size={12} />"More info"</a></span>
+              <span className="field-label-row">Format<a className="field-info-link" href={`/docs#${division.format}`} target="_blank" rel="noopener noreferrer"><Info size={12} />"More info"</a></span>
               <select value={division.format} onChange={(event) => updateDivision(index, "format", event.target.value)}>{formats.map((format) => <option key={format} value={format}>{formatLabel(format)}</option>)}</select>
             </label>
             <small className="field-hint">{formatDescriptions[division.format]}</small>
@@ -294,26 +312,37 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
             <label>Latest finish time<input type="time" value={division.latestTime} onChange={(event) => updateDivision(index, "latestTime", event.target.value)} required /></label>
             <small className="field-hint">No games in this division are scheduled to finish after this time.</small>
           </div>
+          {/* eligibility by birthdate not implemented yet; fields kept with defaults, just hidden */}
+          <div className="field" hidden>
+            <label>Earliest eligible birthdate<input type="date" value={division.earliestBirthdate} onChange={(event) => updateDivision(index, "earliestBirthdate", event.target.value)} /></label>
+            <small className="field-hint">Players born before this date are not eligible.</small>
+          </div>
+          <div className="field" hidden>
+            <label>Latest eligible birthdate<input type="date" value={division.latestBirthdate} onChange={(event) => updateDivision(index, "latestBirthdate", event.target.value)} /></label>
+            <small className="field-hint">Players born after this date are not eligible.</small>
+          </div>
+          <div className="field">
+            <label>Minimum players<input type="number" min={1} max={100} value={division.rosterMin} onChange={(event) => updateDivision(index, "rosterMin", Number(event.target.value))} required /></label>
+            <small className="field-hint">Teams need at least this many rostered players to be eligible.</small>
+          </div>
+          <div className="field">
+            <label>Maximum players<input type="number" min={1} max={100} value={division.rosterMax} onChange={(event) => updateDivision(index, "rosterMax", Number(event.target.value))} required /></label>
+            <small className="field-hint">The most players a team roster may carry.</small>
+          </div>
         </div>
       </div>)}</div>
       <button type="button" className="button add-venue-button" onClick={addDivision}><Plus size={15} />Add another division</button>
     </div>}
 
     {step === 3 && <div className="dialog-form">
-      <div className="form-note"><Mail size={15} />Invite coaches or other spectators by email &mdash; this step is optional. They&apos;ll receive an email notification when the tournament goes live for registration, and when the tournament schedule is first published.</div>
-      <label>Email address<div className="chip-input-row"><input type="email" value={inviteInput} onChange={(event) => setInviteInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addInvitee(); } }} placeholder="coach@example.com" /><button type="button" className="button" onClick={addInvitee}>Add</button></div></label>
-      {invitees.length > 0 && <ul className="chip-list">{invitees.map((email) => <li className="chip" key={email}>{email}<button type="button" aria-label={`Remove ${email}`} onClick={() => removeInvitee(email)}><X size={13} /></button></li>)}</ul>}
-    </div>}
-
-    {step === 4 && <div className="dialog-form">
       <div className="wizard-review">
         <div><dt>Tournament</dt><dd>{details.name || "Untitled tournament"}</dd></div>
         <div><dt>Sport</dt><dd className="capitalize">{details.sport.replaceAll("_", " ")}</dd></div>
         <div><dt>Dates</dt><dd>{details.startsOn} - {details.endsOn} ({details.timezone})</dd></div>
         <div><dt>Venues</dt><dd>{venues.map((venue) => venue.name || "Unnamed venue").join(", ")}</dd></div>
         <div><dt>Divisions</dt><dd>{divisions.map((division) => division.name || "Unnamed division").join(", ")}</dd></div>
-        <div><dt>Spectator invites</dt><dd>{invitees.length ? `${invitees.length} invited` : "None"}</dd></div>
       </div>
+      {!stripeConnected && <div className="form-note"><Info size={15} />Connect and finish onboarding your Stripe account before publishing — you can still save this as a draft.</div>}
       <div className="capacity-check">
         {capacity && !capacity.feasible && <div className="eligibility-banner warning"><ShieldCheck size={21} /><div>
               <strong>{capacity.setupErrors.length + capacity.issues.length} capacity issue{capacity.setupErrors.length + capacity.issues.length === 1 ? "" : "s"} found</strong>
@@ -323,12 +352,10 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
                   {" "}<button type="button" className="link-button" onClick={() => goFix(2)}>Fix in Rules & Divisions</button>
                 </li>)}
                 {capacity.issues.map((issue) => <li key={issue.divisionName}>
-                  {issue.divisionName}: {issue.unplacedCount} of {issue.totalGames} games couldn&apos;t be scheduled at full capacity.
+                  {issue.divisionName}: if this division fills to its {issue.maxTeams}-team maximum, your current {playAreaLabel(details.sport).toLowerCase()}s/schedule can only fit {issue.totalGames - issue.unplacedCount} of the {issue.totalGames} games that would require. Add more {playAreaLabel(details.sport).toLowerCase()} time or lower the max teams before opening registration.
                   {" "}<button type="button" className="link-button" onClick={() => goFix(2)}>Fix in Rules & Divisions</button>
                 </li>)}
               </ul>
-              {capacity.issues.length > 0 && <p>{capacity.resolvedByExtraField ? "Adding just one more field resolves this in simulation \u2014 consider a second venue or play area." : "Try adding another field, extending a division's game window, or lowering games-per-team-per-day or rest minutes."}</p>}
-              <p>You can fix these first, or save as a draft or publish anyway knowing schedule generation may fail until they&apos;re resolved.</p>
             </div></div>}
       </div>
     </div>}
@@ -340,11 +367,11 @@ export function TournamentWizard({ workspace, busy, execute, onClose, onCreated 
         : capacity && !capacity.feasible
           ? <>
               <button type="button" className="button" disabled={busy} onClick={() => create(capacity, false)}>{busy ? <LoaderCircle size={16} className="spin" /> : <Save size={16} />}Save as draft anyway</button>
-              <button type="button" className="button primary" disabled={busy} onClick={() => create(capacity, true)}>{busy ? <LoaderCircle size={16} className="spin" /> : <ShieldCheck size={16} />}Publish anyway</button>
+              <button type="button" className="button primary" disabled={busy || !stripeConnected} title={stripeConnected ? undefined : "Connect Stripe before publishing"} onClick={() => create(capacity, true)}>{busy ? <LoaderCircle size={16} className="spin" /> : <ShieldCheck size={16} />}Publish anyway</button>
             </>
           : <>
               <button type="button" className="button" disabled={busy || !!checkingCapacity} onClick={() => attemptCreate(false)}>{checkingCapacity === "draft" ? <LoaderCircle size={16} className="spin" /> : <Save size={16} />}{checkingCapacity === "draft" ? "Checking capacity\u2026" : "Save as draft"}</button>
-              <button type="button" className="button primary" disabled={busy || !!checkingCapacity} onClick={() => attemptCreate(true)}>{checkingCapacity === "publish" ? <LoaderCircle size={16} className="spin" /> : <ShieldCheck size={16} />}{checkingCapacity === "publish" ? "Checking capacity\u2026" : "Publish tournament"}</button>
+              <button type="button" className="button primary" disabled={busy || !!checkingCapacity || !stripeConnected} title={stripeConnected ? undefined : "Connect Stripe before publishing"} onClick={() => attemptCreate(true)}>{checkingCapacity === "publish" ? <LoaderCircle size={16} className="spin" /> : <ShieldCheck size={16} />}{checkingCapacity === "publish" ? "Checking capacity\u2026" : "Publish tournament"}</button>
             </>}
     </div>
     </div>

@@ -25,6 +25,7 @@ export async function mutateWorkspace(supabase: SupabaseClient, orgId: string, m
     .eq("revision", baseRevision)
     .select("data")
     .single();
+  if (error) console.error("mutateWorkspace: update failed", { orgId, baseRevision, nextRevision: next.revision, code: error.code, message: error.message, details: error.details });
   if (error || !data) throw new DomainError("This workspace changed elsewhere. Refresh and retry.", 409);
   return workspaceSchema.parse(data.data);
 }

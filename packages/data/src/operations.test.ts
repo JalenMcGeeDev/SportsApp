@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyCommand, DomainError, publicTournament } from "@season/core";
+import { applyCommand, publicTournament } from "@season/core";
 import { randomUUID } from "node:crypto";
 import { createDemo } from "./seed";
 
@@ -17,9 +17,11 @@ describe("workspace operations", () => {
     expect(() => applyCommand(state, { type: "score_game", tournamentId: tournament.id, gameId: game.id, version: game.version + 1, homeScore: 3, awayScore: 0, forfeit: false }, context)).toThrow("Refresh");
     expect(state.revision).toBe(0);
   });
-  it("blocks roster approval and leaves an audit trail for valid check-in", () => {
+  it("approves a roster and leaves an audit trail for valid check-in", () => {
     const state = createDemo();
-    expect(() => applyCommand(state, { type: "approve_roster", tournamentId: "autumn-cup", registrationId: "reg-3" }, context)).toThrow(DomainError);
+    const approved = applyCommand(state, { type: "approve_roster", tournamentId: "autumn-cup", registrationId: "reg-3" }, context);
+    expect(approved.tournaments[0]?.registrations[2]?.rosterApproved).toBe(true);
+    expect(approved.audit[0]?.action).toBe("approve_roster");
     const next = applyCommand(state, { type: "check_in", tournamentId: "autumn-cup", registrationId: "reg-2", status: "checked_in" }, context);
     expect(next.tournaments[0]?.registrations[1]?.checkIn).toBe("checked_in");
     expect(next.audit[0]?.action).toBe("check_in");

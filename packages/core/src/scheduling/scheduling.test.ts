@@ -70,7 +70,7 @@ describe("estimateCapacity", () => {
     const tight = { ...capacityInput, venues: [{ name: "Park", address: "100 Park Ave", playAreas: [{ name: "Field 1" }] }], divisions: [{ ...capacityInput.divisions[0]!, maxTeams: 12 }] };
     const result = estimateCapacity(tight);
     expect(result.feasible).toBe(false);
-    expect(result.issues).toEqual([{ divisionIndex: 0, divisionName: "U12", unplacedCount: expect.any(Number), totalGames: expect.any(Number) }]);
+    expect(result.issues).toEqual([{ divisionIndex: 0, divisionName: "U12", maxTeams: 12, unplacedCount: expect.any(Number), totalGames: expect.any(Number) }]);
     expect(typeof result.resolvedByExtraField).toBe("boolean");
   });
   it("surfaces division setup errors instead of throwing", () => {

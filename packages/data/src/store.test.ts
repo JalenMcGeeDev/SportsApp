@@ -6,7 +6,7 @@ import { mutateWorkspace, readWorkspace } from "./store";
 function emptyWorkspace(revision: number): Workspace {
   return {
     revision, mode: "live",
-    organization: { name: "Test Org", slug: "test-org", ownerName: "Alex Test", timezone: "UTC" },
+    organization: { name: "Test Org", slug: "test-org", ownerName: "Alex Test", timezone: "UTC", feeMode: "absorb", stripeConnectAccountId: null, stripeOnboardingComplete: false },
     tournaments: [], announcements: [], notifications: [], messages: [], runs: [], inviteJobs: [], audit: [],
   };
 }

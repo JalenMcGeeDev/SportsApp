@@ -14,6 +14,9 @@ export default async function PublicPage({ params }: { params: Promise<{ organiz
   if (!path.length) return <main className="public-shell"><header className="public-header"><Brand /><span>{workspace.organization.name}</span></header><section className="public-intro"><span className="eyebrow">TOURNAMENTS</span><h1>{workspace.organization.name}</h1></section><div className="tournaments-list">{visible.map((item) => <Link key={item.id} className="tournament-row" href={`/${organization}/${item.slug}`}><CalendarDays size={25} /><div><h2>{item.name}</h2><p><MapPin size={14} />{item.location}<span>{dateLabel(item.startsOn, true)} - {dateLabel(item.endsOn, true)}</span></p></div><Status status={item.status} /><ArrowUpRight size={19} /></Link>)}</div></main>;
   const tournament = visible.find((item) => item.slug === path[0]);
   const view = path[1] ?? "details";
-  if (!tournament || path.length > 2 || !["details", "register"].includes(view)) notFound();
-  return <PublicSeason tournament={publicCompetition(tournament)} organization={{ name: workspace.organization.name, slug: organization }} view={view} />;
+  const registrationId = path[2];
+  if (!tournament) notFound();
+  if (view === "pay") { if (path.length !== 3 || !registrationId) notFound(); }
+  else if (path.length > 2 || !["details", "register"].includes(view)) notFound();
+  return <PublicSeason tournament={publicCompetition(tournament)} organization={{ name: workspace.organization.name, slug: organization }} view={view} registrationId={registrationId} />;
 }

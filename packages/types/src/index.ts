@@ -52,6 +52,9 @@ export const registrationSchema = z.object({
   status: z.enum(["submitted", "waitlisted", "accepted", "declined", "withdrawn"]),
   paymentStatus: z.enum(["unpaid", "processing", "paid", "refunded", "partially_refunded", "failed"]),
   amountCents: z.number().int().nonnegative(), refundedCents: z.number().int().nonnegative(),
+  platformFeeCents: z.number().int().nonnegative().default(0),
+  stripePaymentIntentId: z.string().nullable().default(null), stripeRefundId: z.string().nullable().default(null),
+  stripeCustomerId: z.string().nullable().default(null), stripeInvoiceId: z.string().nullable().default(null), invoiceSentAt: z.string().nullable().default(null),
   waitlistPosition: z.number().int().positive().nullable(), rosterApproved: z.boolean(),
   checkIn: z.enum(["not_checked_in", "checked_in", "flagged"]), players: z.array(playerSchema),
 });
@@ -62,6 +65,10 @@ export const sourceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("pool"), pool: z.string(), rank: z.number().int().positive() }),
   z.object({ kind: z.literal("bye") }),
 ]);
+export const contactSchema = z.object({
+  id: z.string(), name: z.string().trim().min(1).max(100), email: z.string().trim().toLowerCase().email(), note: z.string().trim().max(200),
+});
+export type Contact = z.infer<typeof contactSchema>;
 export const gameSchema = z.object({
   id: z.string(), divisionId: z.string(), pool: z.string().nullable(), round: z.number().int().nonnegative(),
   label: z.string(), bracket: z.enum(["pool", "championship", "losers", "consolation"]),
@@ -81,12 +88,15 @@ export const tournamentSchema = z.object({
   rules: rulesSchema, divisions: z.array(divisionSchema), fields: z.array(fieldSchema),
   registrations: z.array(registrationSchema), games: z.array(gameSchema), publishedGames: z.array(gameSchema),
   invitees: z.array(z.string().trim().toLowerCase().email()).max(100), invitesSentAt: z.string().nullable(),
-  registrationInvitesSentAt: z.string().nullable(),
+  registrationInvitesSentAt: z.string().nullable().default(null),
+  followers: z.array(z.string().trim().toLowerCase().email()).max(500).default([]),
+  contacts: z.array(contactSchema).max(500).default([]),
 });
 export const announcementSchema = z.object({
   id: z.string(), tournamentId: z.string(), subject: z.string().trim().min(3).max(150), body: z.string().trim().min(1).max(5000),
-  audience: z.enum(["tournament", "division", "team"]), audienceId: z.string().nullable(), sentAt: z.string(), recipientCount: z.number().int(),
+  contactIds: z.array(z.string()).max(500).default([]), sentAt: z.string(), recipientCount: z.number().int(),
 });
+export type Announcement = z.infer<typeof announcementSchema>;
 export const notificationSchema = z.object({ id: z.string(), title: z.string(), body: z.string(), createdAt: z.string(), read: z.boolean(), registrationIds: z.array(z.string()) });
 export const messageSchema = z.object({ id: z.string(), registrationId: z.string(), tournamentId: z.string(), sender: z.enum(["manager", "coach"]), body: z.string().trim().min(1).max(5000), sentAt: z.string() });
 export const scheduleRunSchema = z.object({
@@ -95,12 +105,18 @@ export const scheduleRunSchema = z.object({
 });
 export const inviteJobSchema = z.object({
   id: z.string(), tournamentId: z.string(), status: z.enum(["queued", "running", "succeeded", "failed"]),
-  kind: z.enum(["registration_open", "schedule_published"]),
+  kind: z.enum(["registration_open", "schedule_published", "announcement"]).default("schedule_published"),
+  announcementId: z.string().nullable().default(null),
   createdAt: z.string(), completedAt: z.string().nullable(), recipientCount: z.number().int().nonnegative(), error: z.string().nullable(),
 });
 export const workspaceSchema = z.object({
   revision: z.number().int().nonnegative(), mode: z.enum(["demo", "live"]),
-  organization: z.object({ name: z.string().trim().min(2).max(80), slug: z.string(), ownerName: z.string(), timezone: z.string(), avatarUrl: z.string().nullable().optional(), logoUrl: z.string().nullable().optional(), replyToEmail: z.string().nullable().optional() }),
+  organization: z.object({
+    name: z.string().trim().min(2).max(80), slug: z.string(), ownerName: z.string(), timezone: z.string(),
+    avatarUrl: z.string().nullable().optional(), logoUrl: z.string().nullable().optional(), replyToEmail: z.string().nullable().optional(),
+    feeMode: z.enum(["absorb", "passthrough"]).default("absorb"),
+    stripeConnectAccountId: z.string().nullable().default(null), stripeOnboardingComplete: z.boolean().default(false),
+  }),
   tournaments: z.array(tournamentSchema), announcements: z.array(announcementSchema), notifications: z.array(notificationSchema),
   messages: z.array(messageSchema), runs: z.array(scheduleRunSchema), inviteJobs: z.array(inviteJobSchema),
   audit: z.array(z.object({ id: z.string(), action: z.string(), entityId: z.string(), at: z.string(), detail: z.string() })),
@@ -117,8 +133,12 @@ export const createTournamentSchema = tournamentSchema.pick({ name: true, sport:
 export const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("create_tournament"), data: createTournamentSchema }),
   z.object({ type: z.literal("update_tournament"), tournamentId: z.string(), name: z.string().trim().min(3).max(100), status: tournamentSchema.shape.status, rules: rulesSchema }),
+  z.object({ type: z.literal("delete_tournament"), tournamentId: z.string() }),
   z.object({ type: z.literal("add_division"), tournamentId: z.string(), division: divisionSchema.omit({ id: true }) }),
   z.object({ type: z.literal("add_venue"), tournamentId: z.string(), venue: venueDraftSchema }),
+  z.object({ type: z.literal("add_contact"), tournamentId: z.string(), name: z.string().trim().min(1).max(100), email: z.string().trim().toLowerCase().email(), note: z.string().trim().max(200).default("") }),
+  z.object({ type: z.literal("update_contact"), tournamentId: z.string(), contactId: z.string(), name: z.string().trim().min(1).max(100), email: z.string().trim().toLowerCase().email(), note: z.string().trim().max(200).default("") }),
+  z.object({ type: z.literal("delete_contact"), tournamentId: z.string(), contactId: z.string() }),
   z.object({ type: z.literal("register_team"), tournamentId: z.string(), data: registrationSchema.pick({ divisionId: true, teamName: true, clubName: true, city: true, coachName: true, coachEmail: true }) }),
   z.object({ type: z.literal("registration_status"), tournamentId: z.string(), registrationId: z.string(), status: registrationSchema.shape.status }),
   z.object({ type: z.literal("check_in"), tournamentId: z.string(), registrationId: z.string(), status: registrationSchema.shape.checkIn }),
@@ -129,14 +149,23 @@ export const commandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("move_game"), tournamentId: z.string(), gameId: z.string(), fieldId: z.string(), start: z.string().datetime(), version: z.number().int(), force: z.boolean(), reason: z.string().max(500) }),
   z.object({ type: z.literal("score_game"), tournamentId: z.string(), gameId: z.string(), homeScore: z.number().int().min(0).max(999), awayScore: z.number().int().min(0).max(999), version: z.number().int(), forfeit: z.boolean().default(false) }),
   z.object({ type: z.literal("game_status"), tournamentId: z.string(), gameId: z.string(), status: z.enum(["in_progress", "postponed", "cancelled", "scheduled"]), version: z.number().int() }),
-  z.object({ type: z.literal("announce"), tournamentId: z.string(), data: announcementSchema.pick({ subject: true, body: true, audience: true, audienceId: true }) }),
+  z.object({ type: z.literal("announce"), tournamentId: z.string(), data: announcementSchema.pick({ subject: true, body: true, contactIds: true }) }),
+  z.object({ type: z.literal("follow_tournament"), tournamentId: z.string(), email: z.string().trim().toLowerCase().email() }),
   z.object({ type: z.literal("message"), tournamentId: z.string(), registrationId: z.string(), body: z.string().trim().min(1).max(5000) }),
   z.object({ type: z.literal("read_notifications") }),
   z.object({ type: z.literal("update_organization"), name: z.string().trim().min(2).max(80), avatarUrl: z.string().nullable().optional(), logoUrl: z.string().nullable().optional(), replyToEmail: optionalEmailSchema }),
+  z.object({ type: z.literal("update_fee_mode"), feeMode: z.enum(["absorb", "passthrough"]) }),
+  z.object({ type: z.literal("record_stripe_account"), stripeConnectAccountId: z.string() }),
+  z.object({ type: z.literal("update_stripe_onboarding"), complete: z.boolean() }),
+  z.object({ type: z.literal("record_payment_intent"), tournamentId: z.string(), registrationId: z.string(), paymentIntentId: z.string(), platformFeeCents: z.number().int().nonnegative(), totalChargedCents: z.number().int().nonnegative() }),
+  z.object({ type: z.literal("record_payment_status"), tournamentId: z.string(), registrationId: z.string(), paymentIntentId: z.string(), status: z.enum(["processing", "paid", "failed"]) }),
+  z.object({ type: z.literal("refund_registration"), tournamentId: z.string(), registrationId: z.string(), amountCents: z.number().int().positive(), stripeRefundId: z.string() }),
+  z.object({ type: z.literal("record_invoice_sent"), tournamentId: z.string(), registrationId: z.string(), stripeCustomerId: z.string(), stripeInvoiceId: z.string() }),
+  z.object({ type: z.literal("record_invoice_status"), tournamentId: z.string(), registrationId: z.string(), stripeInvoiceId: z.string(), status: z.enum(["paid", "failed", "voided"]), paymentIntentId: z.string().nullable() }),
 ]);
 export const mutationSchema = z.object({ revision: z.number().int().nonnegative(), command: commandSchema });
-export const publicTournamentSchema = tournamentSchema.pick({ id: true, name: true, slug: true, sport: true, startsOn: true, endsOn: true, timezone: true, description: true, location: true, status: true, rules: true }).extend({
-  divisions: z.array(divisionSchema.pick({ id: true, name: true, format: true, maxTeams: true, guaranteedGames: true, entryFeeCents: true })),
+export const publicTournamentSchema = tournamentSchema.pick({ id: true, name: true, slug: true, sport: true, startsOn: true, endsOn: true, timezone: true, description: true, location: true, status: true, rules: true, publishedAt: true }).extend({
+  divisions: z.array(divisionSchema.pick({ id: true, name: true, format: true, maxTeams: true, guaranteedGames: true, advancePerPool: true, entryFeeCents: true })),
   fields: z.array(fieldSchema.pick({ id: true, name: true, venue: true })),
   teams: z.array(registrationSchema.pick({ id: true, teamName: true, divisionId: true, pool: true, seed: true, status: true })),
   games: z.array(gameSchema),
